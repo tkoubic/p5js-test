@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>p5.js Particle Catalog</title>
+    <!-- p5.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            background-color: #f0f0f0;
+            overflow: hidden; /* Zabrání scrollbarům celé stránky */
+        }
+
+        #catalog-menu {
+            width: 200px;
+            background-color: #e0e0e0;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            overflow-y: auto; /* Scrollbar pro menu, pokud je dlouhé */
+            flex-shrink: 0; /* Menu se nebude smršťovat */
+        }
+
+        #catalog-menu h2 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+            color: #333;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 10px;
+        }
+
+        #catalog-menu ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        #catalog-menu li a {
+            display: block;
+            padding: 10px 15px;
+            text-decoration: none;
+            color: #007bff;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            transition: background-color 0.2s ease;
+        }
+
+        #catalog-menu li a:hover {
+            background-color: #d0d0d0;
+        }
+
+        #catalog-menu li a.active {
+            background-color: #007bff;
+            color: white;
+            font-weight: bold;
+        }
+
+        #sketch-display {
+            flex-grow: 1; /* Zabere zbytek šířky */
+            position: relative; /* Pro pozicování canvasu */
+            background-color: #222; /* Tmavé pozadí pro canvas */
+        }
+
+        /* p5.js canvas bude mít tento styl automaticky díky parent() */
+        #sketch-display canvas {
+            display: block; /* Odstraní mezery pod canvasem */
+        }
+
+    </style>
+</head>
+<body>
+
+    <nav id="catalog-menu">
+        <h2>Vyberte Efekt</h2>
+        <ul>
+            <li><a href="#" data-sketch="dots" class="active">Jednoduché Tečky</a></li>
+            <li><a href="#" data-sketch="lines">Propojené Čáry</a></li>
+            <li><a href="#" data-sketch="gravity_dots">Tečky s Gravitací</a></li>
+            <li><a href="#" data-sketch="repel_mouse">Odpuzování Myší</a></li>
+            <!-- Přidejte sem další odkazy pro nové efekty -->
+        </ul>
+    </nav>
+
+    <main id="sketch-display">
+       
+    </main>
+
+    <script>
+        let particles = [];
+        let currentSketchType = 'dots'; // Výchozí sketch
+        const numParticlesBase = 80; // Základní počet částic
+        let p5Canvas; // Reference na p5 canvas
+        let sketchDisplayDiv; // Reference na div pro zobrazení
+
+        // --- Třídy Částic 
+
+        // Základní částice
+        class SimpleDot {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = random(-1, 1);
+                this.vy = random(-1, 1);
+                this.radius = random(2, 5);
+                this.baseColor = color(255); // Výchozí bílá, přepíše se v display
+                this.connectDistance = 100; // Jak daleko se spojuje
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            display(configColor) {
+                noStroke();
+                fill(configColor || this.baseColor);
+                ellipse(this.x, this.y, this.radius * 2);
+            }
+
+            checkEdges() {
+                if (this.x < -this.radius) this.x = width + this.radius;
+                if (this.y < -this.radius) this.y = height + this.radius;
+                if (this.x > width + this.radius) this.x = -this.radius;
+                if (this.y > height + this.radius) this.y = -this.radius;
+            }
+        }
+
+        // Částice s gravitací (dědí ze SimpleDot)
+        class GravityDot extends SimpleDot {
+             constructor(x, y) {
+                super(x, y); 
+                this.vy = random(-5, 0); // Počáteční impuls nahoru
+                this.gravity = 0.1;
+                this.damping = 0.98; // Trochu zpomalí při odrazu
+            }
+
+             applyGravity() {
+                this.vy += this.gravity;
+            }
+
+             // Přepsání checkEdges pro odraz odspodu
+             checkEdges() {
+                // Boční stěny - projde skrz
+                 if (this.x < -this.radius) this.x = width + this.radius;
+                 if (this.x > width + this.radius) this.x = -this.radius;
+
+                 // Horní okraj - projde skrz
+                 if (this.y < -this.radius) this.y = height + this.radius;
+
+                 // Dolní okraj - odraz
+                if (this.y > height - this.radius) {
+                    this.y = height - this.radius; // Zabrání propadnutí
+                    this.vy *= -1; // Obrátí vertikální rychlost
+                    this.vy *= this.damping; // Zpomalí odraz
+                }
+            }
+        }
+
+        // Částice odpuzovaná myší (dědí ze SimpleDot)
+         class RepelDot extends SimpleDot {
+            constructor(x, y) {
+                super(x, y);
+                this.maxSpeed = 2;
+                 this.maxForce = 0.3; // Síla odpuzování
+                 this.repelRadius = 80; // Dosah odpuzování myši
+                 this.connectDistance = 80; // Menší vzdálenost pro spojení
+            }
+
+            repel(targetX, targetY) {
+                let force = createVector(0, 0);
+                let target = createVector(targetX, targetY);
+                let position = createVector(this.x, this.y);
+                let distance = dist(targetX, targetY, this.x, this.y);
+
+                if (distance < this.repelRadius) {
+                    // Vektor směřující od myši k částici
+                    let repelForce = p5.Vector.sub(position, target);
+                    repelForce.normalize();
+                    // Síla klesá se vzdáleností (1 / distance)
+                    repelForce.mult(this.maxForce * (this.repelRadius / (distance + 1))); // +1 aby se nedělilo nulou
+                    force.add(repelForce);
+                }
+
+                // Aplikace síly (jako zrychlení)
+                this.vx += force.x;
+                this.vy += force.y;
+
+                // Omezení rychlosti
+                 let speed = dist(0, 0, this.vx, this.vy);
+                 if (speed > this.maxSpeed) {
+                     this.vx = (this.vx / speed) * this.maxSpeed;
+                     this.vy = (this.vy / speed) * this.maxSpeed;
+                 }
+            }
+
+             // Můžeme přidat i malé zpomalení, aby se to uklidnilo
+             update() {
+                 super.update(); // Zavolá původní update (pohyb)
+                 this.vx *= 0.98; // Lehké tlumení rychlosti
+                 this.vy *= 0.98;
+             }
+        }
+
+
+        // --- Konfigurace pro jednotlivé sketche  ---
+        const sketchConfig = {
+            dots: {
+                num: numParticlesBase,
+                particleClass: SimpleDot, // Nyní je SimpleDot definována
+                drawConnections: false,
+                useGravity: false,
+                repelMouse: false,
+                backgroundColor: 50,
+                particleColor: [255, 255, 255, 180],
+                connectionColor: [200, 200, 200, 80]
+            },
+            lines: {
+                num: numParticlesBase,
+                particleClass: SimpleDot, // Nyní je SimpleDot definována
+                drawConnections: true,
+                useGravity: false,
+                repelMouse: false,
+                backgroundColor: 30,
+                particleColor: [100, 180, 255, 180],
+                connectionColor: [150, 150, 150, 70]
+            },
+            gravity_dots: {
+                num: numParticlesBase + 20,
+                particleClass: GravityDot, // Nyní je GravityDot definována
+                drawConnections: false,
+                useGravity: true,
+                repelMouse: false,
+                backgroundColor: 40,
+                particleColor: [255, 150, 50, 200],
+                connectionColor: [200, 200, 200, 80]
+            },
+             repel_mouse: {
+                num: numParticlesBase + 40,
+                particleClass: RepelDot, // Nyní je RepelDot definována
+                drawConnections: true,
+                useGravity: false,
+                repelMouse: true,
+                backgroundColor: 20,
+                particleColor: [50, 255, 150, 180],
+                connectionColor: [100, 100, 100, 50]
+            }
+            // ... sem přidávejte konfigurace pro nové sketche
+        };
+
+        // --- Funkce pro načtení/přepnutí sketche ---
+        function loadSketch(sketchName) {
+            // Tato funkce nyní může bezpečně přistupovat k sketchConfig
+            if (!sketchConfig[sketchName]) {
+                console.error("Sketch type not found:", sketchName);
+                return;
+            }
+            console.log("Loading sketch:", sketchName);
+            currentSketchType = sketchName;
+            particles = []; // Vyčistit staré částice
+
+            const config = sketchConfig[currentSketchType];
+            const ParticleClass = config.particleClass; // Získání správné třídy částice
+
+            // Vytvoření nových částic podle konfigurace
+            for (let i = 0; i < config.num; i++) {
+                particles.push(new ParticleClass(random(width), random(height)));
+            }
+
+             // Aktualizace aktivního odkazu v menu
+             document.querySelectorAll('#catalog-menu a').forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('data-sketch') === sketchName) {
+                    link.classList.add('active');
+                }
+            });
+
+            // Zajistí, že draw loop běží (pokud byla zastavena)
+            if (typeof loop === 'function') loop();
+            // Vynutí překreslení, aby se změna projevila hned
+             if (typeof redraw === 'function') redraw();
+        }
+
+
+        // --- p5.js Funkce ---
+        function setup() {
+            sketchDisplayDiv = select('#sketch-display'); // Najdi kontejner
+            if (!sketchDisplayDiv) {
+                console.error("Display container #sketch-display not found!");
+                noLoop(); // Zastav p5, pokud není kam kreslit
+                return;
+            }
+            // Vytvoř canvas uvnitř kontejneru
+            p5Canvas = createCanvas(sketchDisplayDiv.width, sketchDisplayDiv.height);
+            p5Canvas.parent('sketch-display'); // Připoj canvas k divu
+
+            // Inicializace výchozího sketche
+            loadSketch(currentSketchType); // Načte 'dots'
+             console.log("p5 setup complete. Canvas size:", width, height);
+        }
+
+        function draw() {
+             if (!particles || !currentSketchType || !sketchConfig[currentSketchType]) {
+                 //console.log("Draw waiting for setup...");
+                 return; // Pokud ještě není vše připraveno
+             }
+
+            const config = sketchConfig[currentSketchType];
+            background(config.backgroundColor); // Nastavení pozadí dle konfigurace
+
+             // Aktualizace a kreslení částic
+            for (let i = 0; i < particles.length; i++) {
+                // Použití specifických metod, pokud existují
+                if (config.useGravity && typeof particles[i].applyGravity === 'function') {
+                    particles[i].applyGravity();
+                }
+                 if (config.repelMouse && typeof particles[i].repel === 'function') {
+                    particles[i].repel(mouseX, mouseY);
+                }
+
+                particles[i].update();
+                particles[i].display(config.particleColor); // Předáme barvu z konfigurace
+                particles[i].checkEdges();
+
+                // Kreslení čar mezi blízkými částicemi (pokud je zapnuto)
+                if (config.drawConnections) {
+                    strokeWeight(0.5); // Tenčí čáry
+                    for (let j = i + 1; j < particles.length; j++) {
+                        let d = dist(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
+                        let connectDist = particles[i].connectDistance || 100; // Výchozí nebo specifická vzdálenost
+                        if (d < connectDist) {
+                            let alpha = map(d, 0, connectDist, 150, 0);
+                            let connectionCol = color(config.connectionColor); // Získání barvy z konfigurace
+                            connectionCol.setAlpha(alpha); // Nastavení vypočítané průhlednosti
+                            stroke(connectionCol);
+                            line(particles[i].x, particles[i].y, particles[j].x, particles[j].y);
+                        }
+                    }
+                }
+            }
+        }
+
+        function windowResized() {
+            if (sketchDisplayDiv) {
+                 // Přizpůsobení velikosti canvasu kontejneru
+                resizeCanvas(sketchDisplayDiv.width, sketchDisplayDiv.height);
+                console.log("Canvas resized to:", width, height);
+                // Můžeme zde znovu inicializovat částice, aby se lépe rozmístily,
+                // nebo je nechat, aby se přizpůsobily samy.
+                // loadSketch(currentSketchType); // Příklad znovunačtení
+            }
+        }
+
+        // --- Interakce Menu ---
+        document.addEventListener('DOMContentLoaded', () => {
+            const menuLinks = document.querySelectorAll('#catalog-menu a');
+
+            menuLinks.forEach(link => {
+                link.addEventListener('click', (event) => {
+                    event.preventDefault(); // Zabraň výchozí akci odkazu
+                    const sketchName = link.getAttribute('data-sketch');
+
+                     // Zavolání p5 funkce pro změnu sketche
+                     if (typeof loadSketch === 'function') {
+                          loadSketch(sketchName);
+                     } else {
+                         console.warn("loadSketch function not ready yet.");
+                     }
+                });
+            });
+
+             // Zajistíme, že canvas má správnou velikost i po načtení DOM
+             if (typeof windowResized === 'function') {
+                 setTimeout(windowResized, 100); // Krátké zpoždění pro jistotu
+             }
+        });
+
+    </script>
+
+
+       
+
+</body>
+</html>
